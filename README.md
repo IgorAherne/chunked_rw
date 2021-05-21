@@ -2,7 +2,7 @@
 
 Chunked Reader Writer, for efficient processing of chunk, while another chunk is being loaded from Hard Drive 
 (or while it's being written, in the case of Writer).
-
+</br>
 </br>
 <b>file_reader_chunks:</b></br></br>
 When using the reader, you just need to invoke a method for getting the next literal. 
