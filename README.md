@@ -1,6 +1,6 @@
 # chunked_rw
 
-Chunked Reader Writer, for efficient processing of chunk, while another chunk is being loaded from Hard Drive 
+"Chunked" Reader and Writer, for efficient processing of chunk, while another chunk is being loaded from Hard Drive 
 (or while it's being written, in the case of Writer).
 </br>
 </br>
