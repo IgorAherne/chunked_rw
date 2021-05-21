@@ -8,7 +8,7 @@ It will help to minimise the latency, which is important because fetching from D
 </br>
 </br>
 <b>file_reader_chunks:</b></br></br>
-When using the reader, you just need to invoke a method for getting the next literal.</br> 
+When using the reader, you just need to invoke a method for getting a next literal.</br> 
 The reader automatically begins fetching the next chunk asynchronously, when it's time to get more stuff.
 
 <b>file_writer_chunks:</b></br></br>
