@@ -1,7 +1,8 @@
 # chunked_rw
 
-"Chunked" Reader and Writer, for efficient processing of chunk of bytes, while another chunk is still being loaded from Hard Drive 
-(or while it's being written, in the case of Writer).
+"Chunked" Reader and Writer, for efficient processing of already loaded bytes, while more is still being loaded from Hard Drive 
+(or while it's being written, in the case of Writer). 
+Groups of bytes are reffered to as "Chunk"
 </br>
 </br>
 </br>
