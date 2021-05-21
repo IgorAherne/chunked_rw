@@ -1,3 +1,5 @@
+// MIT LICENSE
+
 #pragma once
 #include <string>
 #include <fstream>
@@ -10,8 +12,6 @@
 // while we continue filling the other buffer.
 class file_writer_chunks {
 public:
-    // Choose the size that is likely to saturate HDD bandwidth.
-    // Too little or too large will make you wait more than necessary, for HDD to complete.
     file_writer_chunks(){}
 
 
@@ -32,7 +32,12 @@ public:
         return _path_file_with_exten;  
     }
 
-
+    // startingFilesizeBytes:
+    //   Creates a file with that size beforehand, to avoid copying to another location on HDD
+    //   once the file grows large and needs to be re-allocated.
+    // bufferSizeBytes:
+    //   Choose the size that is likely to saturate HDD bandwidth.
+    //   Too little or too large will make you wait more than necessary, for HDD to complete.
     void beingWrite( const std::string& path_file_with_exten,  
                      size_t startingFilesizeBytes = 1024,  
                      std::ios_base::openmode openMode = std::ios::trunc,
