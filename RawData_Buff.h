@@ -1,4 +1,6 @@
-//MIT LICENSE
+// MIT LICENSE
+// igor.aherne.business@gmail.com
+// Requires C++17  for std::filesystem 
 
 #pragma once
 #include <memory>
