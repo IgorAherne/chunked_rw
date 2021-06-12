@@ -1,19 +1,20 @@
-// MIT LICENSE
-// igor.aherne.business@gmail.com
-// Requires C++17  for std::filesystem 
-
 #pragma once
 #include <string>
 #include <fstream>
 #include <filesystem>
 #include <future>
 #include <cassert>
+#include "defines.h"
+
+BEGIN_NAMESPACE(harvest)
 
 // Add your bytes to the current buffer (there are two internally).
 // When one buffer gets full it will be written to the file asynchronously, 
 // while we continue filling the other buffer.
 class file_writer_chunks {
 public:
+    // Choose the size that is likely to saturate HDD bandwidth.
+    // Too little or too large will make you wait more than necessary, for HDD to complete.
     file_writer_chunks(){}
 
 
@@ -25,7 +26,7 @@ public:
 
     // NOTICE: If file was created with re-reserved size, will show 
     // entire size of the file, including the reserved space:
-    size_t fileSize_curr()const{
+    ssize_t fileSize_curr()const{
         if(_f.is_open()==false){ return -1; }
         return std::filesystem::file_size( _path_file_with_exten );
     }
@@ -34,12 +35,7 @@ public:
         return _path_file_with_exten;  
     }
 
-    // startingFilesizeBytes:
-    //   Creates a file with that size beforehand, to avoid copying to another location on HDD
-    //   once the file grows large and needs to be re-allocated.
-    // bufferSizeBytes:
-    //   Choose the size that is likely to saturate HDD bandwidth.
-    //   Too little or too large will make you wait more than necessary, for HDD to complete.
+
     void beingWrite( const std::string& path_file_with_exten,  
                      size_t startingFilesizeBytes = 1024,  
                      std::ios_base::openmode openMode = std::ios::trunc,
@@ -61,6 +57,7 @@ public:
         }
 
         std::filesystem::resize_file( path_file_with_exten, startingFilesizeBytes);
+        _neverWroteToBuff_yet = true;
         _isA = true;
         _next_ix_inBuff = 0;
         _began = true;
@@ -69,17 +66,28 @@ public:
 
     // Very slow. If our buffers are currently being flushed, waits until they finished being flushed.
     // Then, blocks execution until complete and overwrites somewhere in the middle of the file
-    void overwriteBytes_slow(uintmax_t numBytesOffset_inFile,  const void* bytes,  size_t count){
+    void overwriteBytes_slow(size_t numBytesOffset_inFile,  const void* bytes,  size_t count){
         if(_writeTask_A.valid()){  _writeTask_A.get(); }
         if(_writeTask_B.valid()){  _writeTask_B.get(); }
 
         size_t p = _f.tellp();//NOTICE: location in file (p) is always in increments of '_buffSizeBytes'.
 
+        // If we never stored anything to the buffers and
+        // if file pointer is at start and
+        // if overwriting with zero offset inside file:
+        // then it is a special case, where we will just write the data into the buffer.
+        // This is useful for files made of a "Header" and then a "Body".
+        // Otherwise we would have a bug: we would successfully overwrite, reverting the file-pointer 
+        // to its original place (to zero) ...but future buffers would flush over current stuff.
+        if(_neverWroteToBuff_yet  &&  p == 0  &&  numBytesOffset_inFile == 0){
+            writeBytes( bytes, count );
+            return;
+        }
         const bool completely_beforeArea =  numBytesOffset_inFile+count <= p;
         const bool completely_afterArea =  numBytesOffset_inFile >= p+_buffSizeBytes;
 
         if( !completely_beforeArea && !completely_afterArea ){
-            // we want to alter part of file where the buffer will output later.
+            // we want to alter part of file where the buffer will soon output.
             // For example, buffer might later output to a b c d and 4 more places,
             // but we want now to insert into x x x x x x x x 
             //
@@ -93,7 +101,7 @@ public:
         }
 
         //you can only overwrite inside the file, or append to the end. Can't start far beyond:
-        assert(numBytesOffset_inFile <= p);
+        nn_dev_assert(numBytesOffset_inFile <= p);
 
         //NOTICE: we will overwrite any consecutive bytes in a file, NOT insert. http://www.cplusplus.com/forum/beginner/150097/
         _f.seekp(numBytesOffset_inFile, std::ios_base::beg);
@@ -106,6 +114,8 @@ public:
     // The other buffer will be written to the file asynchronously, when becomes full.
     void writeBytes(const void* bytes,  size_t count){
         assert(_began);
+        _neverWroteToBuff_yet = false;
+
         while( count > 0){
                 if(_isA){
                 //we will be soon writing to buffer A, so making sure it's no longer being written to file:
@@ -181,6 +191,7 @@ private:
 
     bool _began = false; //was beginWrite() called or not.
 
+    bool _neverWroteToBuff_yet = true;
     unsigned char* _buff_A =nullptr;
     unsigned char* _buff_B =nullptr;
     size_t _buffSizeBytes = 0;
@@ -191,3 +202,5 @@ private:
     std::future<void> _writeTask_A;
     std::future<void> _writeTask_B;
 };
+
+END_NAMESPACE
