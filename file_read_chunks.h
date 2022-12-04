@@ -16,7 +16,6 @@
 //alias for a function pointer. 
 typedef std::function<void(RawData_Buff& buff, bool isLastChunk)>  L_chunkFunc;
 
-
 // Opens file and reads it by chunks.
 // You process one chunk while more file is seamlessly loaded into the other chunk. 
 // Then they swap. (chunks are only used internally, end user doesn't interact with them).
@@ -36,7 +35,7 @@ typedef std::function<void(RawData_Buff& buff, bool isLastChunk)>  L_chunkFunc;
 // See read_rawData()      <-- for example, could be used when in a loop
 // See read_Literal()    <-- int, float, struct (shallow, no deep copies), etc.
 // See read_String()    <--ascii text, for example "hello, I am Igor"
-
+//
 class file_read_chunks{
 
 public:
@@ -65,19 +64,27 @@ public:
         
         _chunkSize =     _buff_a.totalAlocatedSize();
         _fileByteSize =  std::filesystem::file_size(p);//throws exception if path doesn't exist. 
-        _numChunks =     _fileByteSize / _chunkSize;
+        _numChunks =     (int)(_fileByteSize / _chunkSize);
         _lastChunkSize = _fileByteSize % _chunkSize; //in case there are some left overs 
+        _ix_inEntireFile = 0;
         // 'numChunks' includes the last chunk.
         // If there was no remainder, then the last chunk is normal.
         // Make sure to set it, because it will be used on last iter:
         if(_lastChunkSize > 0){ _numChunks++; }
         else{ _lastChunkSize = _chunkSize; }
 
-        fetchIntoBuff_thrd(true);
-        _loadThread.join();
-
-        fetchIntoBuff_thrd(false);//non-blocking (don't join())
+        bool willLoadIntoLastChunk = _numChunks==1;
+        fetchIntoBuff_thrd(true, willLoadIntoLastChunk); // true: fill _buff_A (doesn't block the thread)
         
+        if (_numChunks>1){
+            willLoadIntoLastChunk = _numChunks==2;
+            //at the start of the function it waits for the _buff_A to fill. (blocks the thread)
+            fetchIntoBuff_thrd(false, willLoadIntoLastChunk);
+        }else {
+            if (_loadThread.joinable()){ _loadThread.join(); }//wait until _buff_A is filled
+        }
+        //NOTICE: don't invoke 'focus_next_buffer()' yet.
+
         _isA = true;
         _readingChunk_id = 0;
     }
@@ -95,16 +102,22 @@ public:
         return !isLastChunk  ||  !get_currBuff().endReached();
     }
 
+    
+    size_t fileByteSize() const {  assert(_file.is_open()); return _fileByteSize;  }
 
-    size_t currBuff_remainingBytes(){
-        return get_currBuff().remaining();  
-    }
+    size_t remainingBytes_total() const { return _fileByteSize - _ix_inEntireFile; } //how many bytes we have left to read
+
+    size_t remainingBytes_in_currBuff()const{ return get_currBuff().remaining(); }
+
+
 
 
     // Loads into buffers, and stores into 'outputHere'.
     // Swaps buffers until all information is retrieved.
     void read_rawData( char* outputHere, size_t numBytes ){
-        assert(_file.is_open());
+        nn_dev_assert(_file.is_open());
+        if(numBytes > _fileByteSize-_ix_inEntireFile){ throw std::runtime_error("requesting more byte than there remains to be read."); }
+        const size_t numBytes_copy = numBytes;
 
         while(numBytes > 0){
                 RawData_Buff& buff =  get_currBuff();
@@ -115,12 +128,21 @@ public:
                 buff.skipBytes(numCopy);
 
                 if(buff.endReached()){
-                    fetchIntoBuff_thrd( _isA );//start loading into the buffer that we used to read from.
                     focus_next_buffer();
+                    if(_readingChunk_id < _numChunks-1){   
+                        //check if we are about to load into final chunk
+                        int id_for_load =  _readingChunk_id+1;
+                        bool willLoadIntoFinalChunk =  id_for_load == (_numChunks-1);
+                        // NOTICE:  !_isA  because we start loading into the buffer 
+                        // that we've just been using to read from.
+                        fetchIntoBuff_thrd( !_isA, willLoadIntoFinalChunk);
+                    }
                 }
                 outputHere += numCopy;
                 numBytes -= numCopy;
         }//end while
+
+        _ix_inEntireFile += numBytes_copy;
     }
 
 
@@ -130,33 +152,36 @@ public:
     }
 
     void read_String(std::string& output, size_t numChars){
-        assert(_file.is_open());
+        nn_dev_assert(_file.is_open());
         output.resize(numChars);
         read_rawData( output.data(), numChars );
     }
 
 
 private:
-    void fetchIntoBuff_thrd(bool isLoad_intoA){
+    void fetchIntoBuff_thrd(bool isLoad_intoA, bool isLoadIntoFinalChunk){
         if (_loadThread.joinable()){ _loadThread.join(); }
-        if (_readingChunk_id >= _numChunks){ return; }
+
+        size_t this_chunk_size =  isLoadIntoFinalChunk ? _lastChunkSize /* then fill chunk with remaining bytes */
+                                                       : _chunkSize; /* else fill entire chunk */
+
+        // NOTICE:  we don't use '_isA' because it might get changed while this thread works
+        // (could be launched on a separate thread.)
+        RawData_Buff* buf_ptr = isLoad_intoA ? &_buff_a : &_buff_b;
+        
+        //NOTICE: reset ix and set apparent size OUTSIDE of lambda, 
+        //to avoid raise conditions when user invokes HasMoreForRead().
+        buf_ptr->reset_ix();
+        buf_ptr->set_apparent_size(this_chunk_size);
+
+        if(this_chunk_size == 0){ return; }
 
         //NOTICE: not using [&] because 'isLoad_intoA' must be captured by VALUE only.
         //otherwise, when the scope ends, the value inside lambda will point to garbage.
-        //so, both arguments are by value, but 'this' allows us to access the variables by reference
+        //so, both arguments are by value, but 'this' allows us to access the member vars by reference
         //https://stackoverflow.com/a/21106201/9007125.
-        auto lambda =  [isLoad_intoA, this]{
-            //NOTICE: we don't use '_isA' because it might get changed while this thread works
-            // (could be launched on a separate thread.)
-            RawData_Buff& buf = isLoad_intoA ? _buff_a : _buff_b;
-
-            //check if we will be loading a last chunk:
-            bool isLastChunk = _readingChunk_id == (_numChunks - 1);
-            size_t this_chunk_size = isLastChunk ? _lastChunkSize /* then fill chunk with remaining bytes */
-                                                  : _chunkSize; /* else fill entire chunk */
-            buf.reset_ix();
-            _file.read((char*)buf.data_begin(), this_chunk_size);
-            buf.set_apparent_size(this_chunk_size);
+        auto lambda =  [this_chunk_size, buf_ptr, this]{
+            this->_file.read((char*)buf_ptr->data_begin(), this_chunk_size);
         };
 
         _loadThread = std::thread( lambda );
@@ -164,9 +189,8 @@ private:
 
 
 private:
-    RawData_Buff& get_currBuff(){  
-        return _isA ? _buff_a : _buff_b;  
-    }
+    const RawData_Buff& get_currBuff()const{  return _isA ? _buff_a : _buff_b;  }
+          RawData_Buff& get_currBuff(){  return _isA ? _buff_a : _buff_b;  }
 
     void focus_next_buffer(){
         if(HasMoreForRead()==false){ return; }
@@ -177,12 +201,13 @@ private:
 
 private:
     std::ifstream _file;
-    size_t _fileByteSize;
-    size_t _numChunks;
-    size_t _chunkSize;
-    size_t _lastChunkSize;
+    size_t _fileByteSize = 0;
+    size_t _ix_inEntireFile = 0;
+    int _numChunks = 0;
+    size_t _chunkSize = 0;
+    size_t _lastChunkSize = 0;
 
-    size_t _readingChunk_id=0;//which chunk are we 'reading' currently (no longer loading into it)
+    int _readingChunk_id=0;//which chunk are we 'reading' currently (no longer loading into it)
 
     bool _isA = true;
     RawData_Buff _buff_a;
