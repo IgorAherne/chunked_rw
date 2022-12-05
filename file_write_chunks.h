@@ -66,12 +66,14 @@ public:
 
 
 
-    void beingWrite( const std::string& path_file_with_exten,  
+    void beginWrite( const std::string& path_file_with_exten,  
                      size_t startingFilesizeBytes = 1024,  
                      std::ios_base::openmode openMode = std::ios::trunc,
                      size_t bufferSizeBytes=1024*1024 ){
+
         assert(bufferSizeBytes >= 1024);//else, not performant
         std::lock_guard lck(_mu);
+        std::lock_guard lckFile(_mu_fileAccess);
 
             _path_file_with_exten =  path_file_with_exten;
             _buffSizeBytes = bufferSizeBytes;
@@ -108,10 +110,11 @@ public:
     void completeWrite(){
         std::lock_guard lck(_mu);
         assert(_began);
-            ensure_all_buffs_flushed_to_file();
-            _f.close();//finish
-            _path_file_with_exten = "";
-            _began = false;
+        ensure_all_buffs_flushed_to_file();
+            std::lock_guard lckFile(_mu_fileAccess);
+                _f.close();//finish
+                _path_file_with_exten = "";
+                _began = false;
     }
 
 
@@ -129,41 +132,46 @@ public:
     void overwriteBytes_slow(size_t numBytesOffset_inFile,  const void* bytes,  size_t count){
     
         std::lock_guard lck(_mu);
-            ensure_all_buffs_flushed_to_file();
-            size_t p = _f.tellp();
-            bool fileEmpty_afterFlushAll =  p==0; //checks if the position remained at 0 even after flush-attempts of both buffers.
+        
+        ensure_all_buffs_flushed_to_file();
 
-            //you can only overwrite inside the file, or append to the end. Can't start far beyond:
-            nn_dev_assert(numBytesOffset_inFile <= p);
+            std::lock_guard lckFile(_mu_fileAccess);
 
-            //NOTICE: we will overwrite any consecutive bytes in a file, NOT insert. http://www.cplusplus.com/forum/beginner/150097/
-            _f.seekp(numBytesOffset_inFile, std::ios_base::beg);
-            _f.write((const char*)bytes, count);
+                size_t p = _f.tellp();
+                bool fileEmpty_afterFlushAll =  p==0; //checks if the position remained at 0 even after flush-attempts of both buffers.
 
-            //NOTICE: both buffers were already flushed above. 
+                //you can only overwrite inside the file, or append to the end. Can't start far beyond:
+                nn_dev_assert(numBytesOffset_inFile <= p);
 
-            if(fileEmpty_afterFlushAll){
-                /*Do nothing. 
-                  That's because we wrote into the file for the first time, flush_all_nonsaved_toFile() didn't store anything.
-                  So, keep the pointer where it ended up, DON'T revert it back (to zero).
-                  Otherwise, some future buffer would dump itself into file at zero, overwriting our stuff*/
-            }else{
-                _f.seekp(p, std::ios_base::beg);//come back to original place.
-            }
+                //NOTICE: we will overwrite any consecutive bytes in a file, NOT insert. http://www.cplusplus.com/forum/beginner/150097/
+                _f.seekp(numBytesOffset_inFile, std::ios_base::beg);
+                _f.write((const char*)bytes, count);
+
+                //NOTICE: both buffers were already flushed above. 
+
+                if(fileEmpty_afterFlushAll){
+                    /*Do nothing. 
+                      That's because we wrote into the file for the first time, flush_all_nonsaved_toFile() didn't store anything.
+                      So, keep the pointer where it ended up, DON'T revert it back (to zero).
+                      Otherwise, some future buffer would dump itself into file at zero, overwriting our stuff*/
+                }else{
+                    _f.seekp(p, std::ios_base::beg);//come back to original place.
+                }
     }
 
 
 private:
     void ensure_all_buffs_flushed_to_file(){
         //NOTICE: mutex is already locked.
+
         if(_writeTask_A.valid()){  _writeTask_A.get();  }
         if(_writeTask_B.valid()){  _writeTask_B.get();  }
 
         const size_t count =  _next_ix_inBuff;
 
         if(count > 0){//if some amount remains in one of the buffers:
-            if(_isA){  _f.write((const char*)_buff_A, count);  } //_isA means we were gathering into A. Flush it now.
-            else{      _f.write((const char*)_buff_B, count);  }
+            if(_isA){  std::lock_guard lckFile(_mu_fileAccess); _f.write((const char*)_buff_A, count); } //_isA means we were gathering into A. Flush it now.
+            else{      std::lock_guard lckFile(_mu_fileAccess); _f.write((const char*)_buff_B, count); }
         }
         _next_ix_inBuff = 0;
         _isA = true;
@@ -195,8 +203,14 @@ private:
                 if(numToWrite < numAvailabile){ break; }//"less than", NOT "less or equal".
 
                 //flush the buffer into file.  Notice, that we use [=] not [&]
-                if(_isA){ _writeTask_A =  std::async(std::launch::async,  [=]{_f.write( (const char*)buff, _buffSizeBytes);} );  }
-                else {    _writeTask_B =  std::async(std::launch::async,  [=]{_f.write( (const char*)buff, _buffSizeBytes);} );  }
+                auto writingLambda = [=]{ 
+                    std::lock_guard lckFile(this->_mu_fileAccess);
+                    size_t pos = _f.tellp();
+                    this->_f.write( (const char*)buff, _buffSizeBytes);
+                };
+
+                if(_isA){ _writeTask_A =  std::async(std::launch::async, writingLambda); }
+                else {    _writeTask_B =  std::async(std::launch::async, writingLambda); }
 
                 _isA = !_isA;
                 _next_ix_inBuff = 0;
@@ -227,5 +241,6 @@ private:
     std::future<void> _writeTask_A;
     std::future<void> _writeTask_B;
 
-    mutable std::mutex _mu;
+    mutable std::mutex _mu;//for user interacting with us
+    mutable std::mutex _mu_fileAccess; //for cases when we are doing something with the _f variable.
 };
