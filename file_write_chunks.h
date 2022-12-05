@@ -205,7 +205,6 @@ private:
                 //flush the buffer into file.  Notice, that we use [=] not [&]
                 auto writingLambda = [=]{ 
                     std::lock_guard lckFile(this->_mu_fileAccess);
-                    size_t pos = _f.tellp();
                     this->_f.write( (const char*)buff, _buffSizeBytes);
                 };
 
