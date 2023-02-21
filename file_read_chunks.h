@@ -1,20 +1,20 @@
 // MIT LICENSE
-// igor.aherne.business@gmail.com
-// Requires C++17  for std::filesystem 
 
 #pragma once
 #include <vector>
 #include <fstream>
 #include <string>
-#include <filesystem>
+#include <experimental/filesystem>
 #include <functional>
 #include <thread>
 #include "RawData_Buff.h"
-#include <cassert>
 
+BEGIN_NAMESPACE(harvest)
 
 //alias for a function pointer. 
-typedef std::function<void(RawData_Buff& buff, bool isLastChunk)>  L_chunkFunc;
+typedef std::function<void(harvest::RawData_Buff& buff, bool isLastChunk)>  L_chunkFunc;
+
+namespace fs = std::experimental::filesystem;
 
 // Opens file and reads it by chunks.
 // You process one chunk while more file is seamlessly loaded into the other chunk. 
@@ -35,7 +35,7 @@ typedef std::function<void(RawData_Buff& buff, bool isLastChunk)>  L_chunkFunc;
 // See read_rawData()      <-- for example, could be used when in a loop
 // See read_Literal()    <-- int, float, struct (shallow, no deep copies), etc.
 // See read_String()    <--ascii text, for example "hello, I am Igor"
-//
+
 class file_read_chunks{
 
 public:
@@ -53,7 +53,7 @@ public:
     void BeginRead(const std::string& fileName_with_exten){
         EndRead();//just in case
         
-        std::filesystem::path p(fileName_with_exten);
+        fs::path p(fileName_with_exten);
         _file.open(p, std::ios::binary);
 
         if (_file.is_open() == false){
@@ -63,7 +63,7 @@ public:
         }
         
         _chunkSize =     _buff_a.totalAlocatedSize();
-        _fileByteSize =  std::filesystem::file_size(p);//throws exception if path doesn't exist. 
+        _fileByteSize =  fs::file_size(p);//throws exception if path doesn't exist. 
         _numChunks =     (int)(_fileByteSize / _chunkSize);
         _lastChunkSize = _fileByteSize % _chunkSize; //in case there are some left overs 
         _ix_inEntireFile = 0;
@@ -115,7 +115,7 @@ public:
     // Loads into buffers, and stores into 'outputHere'.
     // Swaps buffers until all information is retrieved.
     void read_rawData( char* outputHere, size_t numBytes ){
-        nn_dev_assert(_file.is_open());
+        assert(_file.is_open());
         if(numBytes > _fileByteSize-_ix_inEntireFile){ throw std::runtime_error("requesting more byte than there remains to be read."); }
         const size_t numBytes_copy = numBytes;
 
@@ -136,6 +136,10 @@ public:
                         // NOTICE:  !_isA  because we start loading into the buffer 
                         // that we've just been using to read from.
                         fetchIntoBuff_thrd( !_isA, willLoadIntoFinalChunk);
+                    }else{
+                        // reading final chunk. MAke sure it was fully loaded. 
+                        // ITS IMPORTANT!!! (the fetchIntoBuff_thrd() was synching, but we didn't run it in this 'else')
+                        if (_loadThread.joinable()){ _loadThread.join(); }
                     }
                 }
                 outputHere += numCopy;
@@ -152,9 +156,9 @@ public:
     }
 
     void read_String(std::string& output, size_t numChars){
-        nn_dev_assert(_file.is_open());
+        assert(_file.is_open());
         output.resize(numChars);
-        read_rawData( output.data(), numChars );
+        read_rawData( &output[0], numChars);
     }
 
 
@@ -215,3 +219,5 @@ private:
 
     std::thread _loadThread;
 };
+
+END_NAMESPACE
