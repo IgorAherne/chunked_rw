@@ -1,7 +1,6 @@
 # chunked_rw
 
-"Chunked" Reader and Writer, allowing you to process already loaded bytes, while it asynchronously loads more from Hard Drive
-</br>(or while it writes, in the case of Writer). 
+"Chunked" Reader and Writer, allowing you to process already loaded bytes, while it asynchronously loads more from disk. (or while it writes, in the case of Writer). 
 </br>Groups of bytes are reffered to as "Chunk". Saving such large groups of bytes all-at-once, will saturate bandwidth. It will help to minimise the latency, which is important because fetching from Disk is a lot slower than fetching from RAM.
 </br>
 </br>
