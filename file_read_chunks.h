@@ -4,17 +4,12 @@
 #include <vector>
 #include <fstream>
 #include <string>
-#include <experimental/filesystem>
+#include <filesystem>
 #include <functional>
 #include <thread>
 #include "RawData_Buff.h"
 
-BEGIN_NAMESPACE(harvest)
-
-//alias for a function pointer. 
-typedef std::function<void(harvest::RawData_Buff& buff, bool isLastChunk)>  L_chunkFunc;
-
-namespace fs = std::experimental::filesystem;
+namespace fs = std::filesystem;
 
 // Opens file and reads it by chunks.
 // You process one chunk while more file is seamlessly loaded into the other chunk. 
@@ -219,5 +214,3 @@ private:
 
     std::thread _loadThread;
 };
-
-END_NAMESPACE
